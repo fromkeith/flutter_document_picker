@@ -32,7 +32,7 @@ public class SwiftFlutterDocumentPickerDelegate: NSObject {
             }
         }
 
-        let documentPickerViewController = UIDocumentPickerViewController(documentTypes: documentTypes, in: .import)
+        let documentPickerViewController = UIDocumentPickerViewController.init(documentTypes: documentTypes, in: .open)
 
         documentPickerViewController.delegate = self
         if(params?.isMultipleSelection == true){
@@ -45,39 +45,59 @@ public class SwiftFlutterDocumentPickerDelegate: NSObject {
 
 extension SwiftFlutterDocumentPickerDelegate: UIDocumentPickerDelegate {
     public func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-        var arrayResult: [String?] = []
-        for url in urls {
-            let fileExtension = url.pathExtension
-
-            if let allowedFileExtensions = params?.allowedFileExtensions {
-                if !allowedFileExtensions.contains(where: { $0 == fileExtension }) {
-                    flutterResult?(FlutterError.init(code: "extension_mismatch",
-                                                     message: "Picked file extension mismatch!",
-                                                     details: fileExtension))
-                }
-            }
-
-            let fileName = sanitizeFileName(url.lastPathComponent)
-
-            // Create file URL to temporary folder
-            var tempUrl = URL(fileURLWithPath: NSTemporaryDirectory())
-            // Apend filename (name+extension) to URL
-            tempUrl.appendPathComponent(fileName)
-            do {
-                // If file with same name exists remove it (replace file with new one)
-                if FileManager.default.fileExists(atPath: tempUrl.path) {
-                    try FileManager.default.removeItem(atPath: tempUrl.path)
-                }
-                // Move file from app_id-Inbox to tmp/filename
-                try FileManager.default.moveItem(atPath: url.path, toPath: tempUrl.path)
-                arrayResult.append(tempUrl.path)
-               
-            } catch {
-                print(error.localizedDescription)
-                arrayResult.append(nil)
-          
-            }
+        
+        var shouldStopAccessing: [Bool] = Array(repeating: false, count: urls.count);
+        for (i, url) in urls.enumerated() {
+            
+            shouldStopAccessing[i] = url.startAccessingSecurityScopedResource()
         }
+                 
+        var arrayResult: [String?] = []
+        for (i, url) in urls.enumerated() {
+                     
+             NSFileCoordinator().coordinate(readingItemAt: url, error:
+                                                NSErrorPointer.none) { (folderURL) in
+                 
+                 do {
+                     
+                     let fileExtension = url.pathExtension
+                     
+                     if let allowedFileExtensions = params?.allowedFileExtensions {
+                         if !allowedFileExtensions.contains(where: { $0 == fileExtension }) {
+                             flutterResult?(FlutterError.init(code: "extension_mismatch",
+                                                              message: "Picked file extension mismatch!",
+                                                              details: fileExtension))
+                         }
+                     }
+                     
+                     let fileName = sanitizeFileName(url.lastPathComponent)
+                     
+                     // Create file URL to temporary folder
+                     var tempUrl = URL(fileURLWithPath: NSTemporaryDirectory())
+                     // Apend filename (name+extension) to URL
+                     tempUrl.appendPathComponent(fileName)
+                     do {
+                         // If file with same name exists remove it (replace file with new one)
+                         if FileManager.default.fileExists(atPath: tempUrl.path) {
+                             try FileManager.default.removeItem(atPath: tempUrl.path)
+                         }
+                         // Move file from app_id-Inbox to tmp/filename
+                         try FileManager.default.copyItem(atPath: url.path, toPath: tempUrl.path)
+                         arrayResult.append(tempUrl.path)
+                         
+                     } catch {
+                         print(error.localizedDescription)
+                         arrayResult.append(nil)
+                         
+                     }
+                 } catch let error {
+                     print("nscord error: ", error.localizedDescription)
+                 }
+             }
+             if shouldStopAccessing[i] {
+                 url.stopAccessingSecurityScopedResource()
+             }
+         }
         
         if(arrayResult.isEmpty){
             flutterResult?(nil)
